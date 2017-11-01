@@ -10,7 +10,9 @@ y = np.dot(y, [[0], [1]])
 
 # Build vocabulary
 max_document_length = max([len(x.split(" ")) for x in x_text])
-vocab_processor = learn.preprocessing.VocabularyProcessor(max_document_length)
+# max_document_length = 3
+min_frequency = 0
+vocab_processor = learn.preprocessing.VocabularyProcessor(max_document_length, min_frequency)
 x = np.array(list(vocab_processor.fit_transform(x_text)))
 
 # Randomly shuffle data
@@ -30,15 +32,34 @@ y_train, y_dev, y_test = y_train.T, y_dev.T, y_test.T
 
 vocab_size = len(vocab_processor.vocabulary_)
 embedding_size = 64
-num_filters = 64
+num_filters = 32
 filter_sizes = [3, 4, 5]
 hidden_units = 20
 num_epochs = 100
-mini_batch_size = 64
+mini_batch_size = 128
 alpha = 0.01
 beta1 = 0.9
 beta2 = 0.999
 epsilon = 1e-8
+
+# vocab_size = len(vocab_processor.vocabulary_)
+# embedding_size = 2
+# num_filters = 2
+# filter_sizes = [2]
+# hidden_units = 3
+# num_epochs = 100
+# mini_batch_size = 64
+# alpha = 0.01
+# beta1 = 0.9
+# beta2 = 0.999
+# epsilon = 1e-8
+# x_train = x_train[:, 7:8]
+# y_train = y_train[:, 7:8]
+
+# print(x_train)
+# print(y_train)
+
+print("vocab_size = " + str(vocab_size))
 
 params = cnn.cnn(x_train, y_train, vocab_size, embedding_size, num_filters, filter_sizes, hidden_units, num_epochs, mini_batch_size, alpha, beta1, beta2, epsilon)
 

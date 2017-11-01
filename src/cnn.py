@@ -5,6 +5,8 @@ import time
 
 
 def relu(a):
+    # gradient checking assert
+    # assert(np.all(np.abs(a) > 1e-5))
     return a * (a > 0)
 
 
@@ -154,56 +156,135 @@ def random_split_batch(X_train, y_train, mini_batch_size):
     return mini_batches
 
 
+def J(X, y, params):
+    E, F, b, W1, b1, W2, b2 = params
+
+    batch_size = X.shape[1]
+
+    A0, conv_cache = conv_forward_prop(X, E, F, b)
+    A1, regular_cache1 = regular_forward_prop(A0, W1, b1, relu)
+    A2, regular_cache2 = regular_forward_prop(A1, W2, b2, sigmoid)
+
+    cost = np.sum((-y * np.log(A2) - (1 - y) * np.log(1 - A2)), axis=1) / batch_size
+
+    caches = conv_cache, regular_cache1, regular_cache2
+    return cost, A2, caches
+
+
+def roll(params):
+    rolled = np.array([])
+    for param in params:
+        # print(str(param.shape) + "    " + str(param.size))
+        rolled = np.append(rolled, param.reshape(-1))
+
+    return rolled
+
+
+def params2tuple(params, total_filters):
+    E = params[0]
+    F = params[1:1+total_filters]
+    b = params[1+total_filters:1+2*total_filters]
+    W1 = params[1+2*total_filters]
+    b1 = params[2+2*total_filters]
+    W2 = params[3+2*total_filters]
+    b2 = params[4+2*total_filters]
+
+    return E, F, b, W1, b1, W2, b2
+
+
+def unroll(rolled, params, total_filters):
+
+    unrolled = [None] * len(params)
+    start = 0
+    for i in range(len(params)):
+        unrolled[i] = rolled[start:start+params[i].size].reshape(params[i].shape)
+        start += params[i].size
+
+    return params2tuple(unrolled, total_filters)
+
+def gradient_checking(params, grads, X, y, total_filters):
+    r_params = roll(params)
+    r_params = r_params.astype(np.float128)
+    # print(r_params)
+    J_plus, J_minus = np.zeros((len(r_params))), np.zeros((len(r_params)))
+    print("len of r_params = " + str(len(r_params)))
+    for i in range(len(r_params)):
+        original = r_params[i]
+        r_params[i] = original + 1e-5
+        J_plus[i], _, _ = J(X, y, unroll(r_params, params, total_filters))
+        r_params[i] = original - 1e-5
+        J_minus[i], _, _ = J(X, y, unroll(r_params, params, total_filters))
+        r_params[i] = original
+
+    d_theta = roll(grads)
+    d_theta_approx = (J_plus - J_minus) / 2 / 1e-5
+
+    # print(d_theta)
+    # print(d_theta_approx)
+    diff = (np.abs(d_theta - d_theta_approx))  # / (np.abs(d_theta) + np.abs(d_theta_approx))
+    # print("diff = "); print(diff)
+
+    # print(d_theta - d_theta_approx)
+    error = np.linalg.norm(d_theta - d_theta_approx) / (np.linalg.norm(d_theta) + np.linalg.norm(d_theta_approx))
+    print("error = " + str(error))
+
+    return
+
 # X_train = seq_len x batch_size
 # y_train = 1 x batch_size
 def cnn(X_train, y_train, vocab_size, embedding_size, num_filters, filter_sizes, hidden_units, num_epochs, mini_batch_size, alpha, beta1, beta2, epsilon, print_cost=True, plot_cost=True):
 
     np.random.seed(7)
     random.seed(7)
+    total_filters = len(filter_sizes)
 
     E = np.random.rand(vocab_size, embedding_size) * 2 - 1
     F = [np.random.randn(filter_size, embedding_size, num_filters) * np.sqrt(6.0 / filter_size / embedding_size) for filter_size in filter_sizes]
-    b = [np.zeros((1, 1, num_filters)) for i in range(len(filter_sizes))]
-    W1 = np.random.randn(hidden_units, num_filters * len(filter_sizes)) * np.sqrt(2.0 / num_filters * len(filter_sizes))
+    b = [np.zeros((1, 1, num_filters)) for i in range(total_filters)]
+    W1 = np.random.randn(hidden_units, num_filters * total_filters) * np.sqrt(2.0 / num_filters * total_filters)
     b1 = np.zeros((hidden_units, 1))
     W2 = np.random.randn(1, hidden_units) * np.sqrt(1.0 / hidden_units)
     b2 = np.zeros((1, 1))
+
+    # gradient checking initialization
+    # E = np.random.rand(vocab_size, embedding_size) * 2 - 1
+    # F = [np.random.randn(filter_size, embedding_size, num_filters) * np.sqrt(6.0 / filter_size / embedding_size) for filter_size in filter_sizes]
+    # b = [np.random.rand(1, 1, num_filters) for i in range(total_filters)]
+    # W1 = np.random.randn(hidden_units, num_filters * total_filters) * np.sqrt(2.0 / num_filters * total_filters)
+    # b1 = np.random.rand(hidden_units, 1)
+    # W2 = np.random.randn(1, hidden_units) * np.sqrt(1.0 / hidden_units)
+    # b2 = np.random.rand(1, 1)
+
+    params = [E] + F + b + [W1, b1, W2, b2]
+    v_grads = [0] * len(params)
+    s_grads = [0] * len(params)
 
     iteration = 0
     costs = []
     for epoch in range(num_epochs):
         mini_batches = random_split_batch(X_train, y_train, mini_batch_size)
 
-        params = [E] + F + b + [W1, b1, W2, b2]
-        v_grads = [0] * len(params)
-        s_grads = [0] * len(params)
         epoch_cost = 0
         for mini_batch in mini_batches:
-            # start_iteration = time.time()
-            # print("iteration = " + str(iteration) + " of " + str(len(mini_batches)))
             iteration += 1
 
             X, y = mini_batch
-            batch_size = X.shape[1]
+            (E, F, b, W1, b1, W2, b2) = params2tuple(params, total_filters)
 
-            # start = time.time()
-            A0, conv_cache = conv_forward_prop(X, E, F, b)
-            # print("conv_forward time = " + str(time.time() - start))
-            A1, regular_cache1 = regular_forward_prop(A0, W1, b1, relu)
-            A2, regular_cache2 = regular_forward_prop(A1, W2, b2, sigmoid)
+            cost, A2, caches = J(X, y, (E, F, b, W1, b1, W2, b2))
+            conv_cache, regular_cache1, regular_cache2 = caches
 
-            cost = np.sum((-y * np.log(A2) - (1 - y) * np.log(1 - A2)), axis=1) / batch_size
             epoch_cost += cost
             print("iteration = " + str(iteration) + " cost = " + str(cost))
 
             dA2 = -y / A2 + (1 - y) / (1 - A2)
             dA1, dW2, db2 = regular_backward_prop(dA2, regular_cache2, sigmoid_backward)
             dA0, dW1, db1 = regular_backward_prop(dA1, regular_cache1, relu_backward)
-            # start = time.time()
             dE, dF, db = conv_backward_prop(dA0, conv_cache)
-            # print("conv_backward time = " + str(time.time() - start))
 
             grads = [dE] + dF + db + [dW1, db1, dW2, db2]
+
+            # gradient_checking(params, grads, X, y, total_filters)
 
             v_grads = [v * beta1 + g * (1 - beta1) for v, g in zip(v_grads, grads)]
             s_grads = [s * beta2 + g * g * (1 - beta2) for s, g in zip(s_grads, grads)]
@@ -212,7 +293,6 @@ def cnn(X_train, y_train, vocab_size, embedding_size, num_filters, filter_sizes,
             s_grads_corrected = [s / (1 - np.power(beta2, iteration)) for s in s_grads]
 
             params = [p - alpha * v / (np.sqrt(s) + epsilon) for p, v, s in zip(params, v_grads_corrected, s_grads_corrected)]
-            # print("iteration time = " + str(time.time() - start_iteration))
 
         epoch_cost /= len(mini_batches)
         if print_cost: #and epoch % 100 == 0:
