@@ -14,98 +14,92 @@ def sigmoid(a):
 
 # X = seq_len x batch_size
 # E = vocab_size x embed_size
-# F = list of filter_size x embed_size
-# b = list of filter biases
-def conv_forward_prop(X, E, F, b):
-
+# F = list of filters of size filter_size x embed_size x num_filters
+# B = list of filter biases of size 1 x 1 x num_filters
+def conv_forward_prop(X, E, F, B):
     seq_len, batch_size = X.shape
-    filter_sizes = [f.shape[0] for f in F]
-    cum_sum_filter_sizes = np.cumsum(filter_sizes)
 
     X = X.T  # batch_size x seq_len
     XE = E[X, :]  # batch_size x seq_len x embed_size
-    XE = XE.reshape((XE.shape[0] * XE.shape[1], XE.shape[2]))  # (batch_size * seq_len) x embed_size
 
-    FC = np.concatenate(F)  # total_sum_filter_sizes x embed_size
+    features, M_idxs, iss, jss, CAs, XE_cols, Ws = [], [], [], [], [], [], []
+    for f, b in zip(F, B):
+        filter_size, embed_size, num_filters = f.shape
+        out_height = seq_len - filter_size + 1
 
-    # i = np.repeat(np.arange(filter_size), embed_size).reshape(1, -1) + np.repeat(np.arange(seq_len - filter_size + 1), 1).reshape(-1, 1)
-    # j = np.array([np.tile(np.arange(embed_size), filter_size)] * (seq_len - filter_size + 1))
-    #
-    # XE[:, i, j].reshape()
+        i = np.repeat(np.arange(filter_size), embed_size).reshape(1, -1) + np.repeat(np.arange(out_height), 1).reshape(-1, 1)
+        j = np.array([np.tile(np.arange(embed_size), filter_size)] * out_height)
+        XE_col = XE[:, i, j]  # batch_size x out_height x (filter_size * embed_size)
+        XE_col = XE_col.reshape((XE_col.shape[0] * XE_col.shape[1], XE_col.shape[2]))  # (batch_size * out_height) x (filter_size * embed_size)
+        W = f.reshape(f.shape[0] * f.shape[1], f.shape[2])  # (filter_size * embed_size) x num_filters
 
-    start = time.time()
-    C = np.dot(XE, FC.T)  # (batch_size * seq_len) x total_sum_filter_sizes
-    print("the great matrix mul time = " + str(time.time() - start))
-    print("XE.shape = " + str(XE.shape))
-    print("C.shape = " + str(C.shape))
-    print("FC.shape = " + str(FC.shape))
+        # convolution
+        CZ = np.dot(XE_col, W)  # (batch_size * out_height) x num_filters
+        CZ = CZ.reshape((batch_size, out_height, num_filters))
+        CZ += b
 
-    start = time.time()
-    features = np.zeros((cum_sum_filter_sizes.size, batch_size))
-    M_idxs = np.zeros((batch_size, cum_sum_filter_sizes.size), dtype=np.int)
-    should_pass_gradient = np.zeros((batch_size, cum_sum_filter_sizes.size))
-    for batch_idx in range(batch_size):
-        filter_idx = 0
-        for filter_start, filter_end in zip(np.insert(cum_sum_filter_sizes, 0, 0), cum_sum_filter_sizes):
+        # activation
+        CA = relu(CZ)
 
-            curr = C[(batch_idx*seq_len):((batch_idx+1)*seq_len), filter_start:filter_end]
-            S = np.array([np.trace(curr, x) for x in range(0, -(seq_len - filter_end + filter_start) - 1, -1)])
+        # max-pool
+        features += [np.amax(CA, axis=1)]
+        M_idxs += [np.argmax(CA, axis=1)]
 
-            S += b[filter_idx]
-            S = relu(S)
+        # cache
+        iss += [i]
+        jss += [j]
+        CAs += [CA]
+        XE_cols += [XE_col]
+        Ws += [W]
 
-            m = np.amax(S)
-            m_idx = random.choice(np.nonzero(S == m)[0])
+    a = np.concatenate(features, axis=1).T
 
-            features[filter_idx, batch_idx] = m
-            M_idxs[batch_idx, filter_idx] = m_idx
-            should_pass_gradient[batch_idx, filter_idx] = m > 0
-
-            filter_idx += 1
-    print("the 2 fors lolz = " + str(time.time() - start))
-
-    cache = M_idxs, should_pass_gradient, cum_sum_filter_sizes, XE, FC, X, E
-    return features, cache
+    cache = features, M_idxs, iss, jss, CAs, XE_cols, Ws, XE, X, E, F
+    return a, cache
 
 
 # dA = total_filters x batch_size
 def conv_backward_prop(dA, cache):
 
-    M_idxs, should_pass_gradient, cum_sum_filter_sizes, XE, FC, X, E = cache
+    dA = dA.T  # batch_size x total_filters
+    features, M_idxs, iss, jss, CAs, XE_cols, Ws, XE, X, E, F = cache
     batch_size, seq_len = X.shape
     vocab_size, embed_size = E.shape
-    dC = np.zeros((batch_size * seq_len, FC.shape[0]))
-    dB = np.zeros((batch_size, cum_sum_filter_sizes.size))
-    dA = dA.T
 
-    for batch_idx in range(batch_size):
-        filter_idx = 0
-        for filter_start, filter_end in zip(np.insert(cum_sum_filter_sizes, 0, 0), cum_sum_filter_sizes):
-            if should_pass_gradient[batch_idx, filter_idx]:
-                m = M_idxs[batch_idx, filter_idx]
-                dC_rows = np.arange(batch_idx * seq_len + m, batch_idx * seq_len + m + filter_end - filter_start)
-                dC_cols = np.arange(filter_start, filter_end)
-                dC[dC_rows, dC_cols] = dA[batch_idx, filter_idx]
-                dB[batch_idx, filter_idx] = dA[batch_idx, filter_idx]
-            filter_idx += 1
+    dFeatures = np.split(dA, np.cumsum([f.shape[1] for f in features][:-1]), axis=1)
 
-    dXE = np.dot(dC, FC)
-    dFC = np.dot(XE.T, dC).T
+    dF, dB = [], []
+    dXE = np.zeros((batch_size, seq_len, embed_size))
+    for f, dFeature, M_idx, i, j, CA, XE_col, W in zip(F, dFeatures, M_idxs, iss, jss, CAs, XE_cols, Ws):
 
-    dF = [dFC[filter_start:filter_end, :] for filter_start, filter_end in zip(np.insert(cum_sum_filter_sizes, 0, 0), cum_sum_filter_sizes)]
-    for x in dF:
-        x /= batch_size
+        filter_size, embed_size, num_filters = f.shape
+        out_height = seq_len - filter_size + 1
+
+        ca_i = np.repeat(np.arange(M_idx.shape[0]), M_idx.shape[1])
+        ca_j = np.tile(np.arange(M_idx.shape[1]), M_idx.shape[0])
+        ca_k = M_idx.reshape(-1)
+
+        dCA = np.zeros((batch_size, out_height, num_filters))
+        dCA[ca_i, ca_k, ca_j] = dFeature[ca_i, ca_j]
+        dCZ = relu_backward(dCA, CA)
+
+        dB += [np.sum(dCZ, axis=(0, 1)) / batch_size]
+        dCZ = dCZ.reshape((batch_size * out_height, num_filters))
+        dXE_col = np.dot(dCZ, W.T)
+        dW = np.dot(XE_col.T, dCZ)
+        dF += [dW.reshape((f.shape[0], f.shape[1], f.shape[2])) / batch_size]
+        dXE_col = dXE_col.reshape((batch_size, out_height, filter_size * embed_size))
+
+        np.add.at(dXE, (slice(None), i, j), dXE_col)  # this line takes the most time in backprop
 
     dE = np.zeros((vocab_size, embed_size))
-    X = X.reshape((X.shape[0] * X.shape[1], 1))
+    X = X.reshape(-1)
+    dXE = dXE.reshape((dXE.shape[0] * dXE.shape[1], dXE.shape[2]))
 
-    for word_idx in range(vocab_size):
-        dE[word_idx, :] = np.sum(dXE[np.nonzero(X == word_idx)[0], :], axis=0, keepdims=True)
+    np.add.at(dE, (X, slice(None)), dXE)
     dE /= batch_size
 
-    db = np.sum(dB, axis=0, keepdims=True) / batch_size
-
-    return dE, dF, db
+    return dE, dF, dB
 
 
 # X = prev_layer_size x batch_size
@@ -168,9 +162,9 @@ def cnn(X_train, y_train, vocab_size, embedding_size, num_filters, filter_sizes,
     random.seed(7)
 
     E = np.random.rand(vocab_size, embedding_size) * 2 - 1
-    F = [np.random.randn(filter_size, embedding_size) * np.sqrt(6.0 / filter_size / embedding_size) for filter_size in filter_sizes for n in range(num_filters)]
-    b = np.zeros((len(F)))
-    W1 = np.random.randn(hidden_units, len(F)) * np.sqrt(2.0 / len(F))
+    F = [np.random.randn(filter_size, embedding_size, num_filters) * np.sqrt(6.0 / filter_size / embedding_size) for filter_size in filter_sizes]
+    b = [np.zeros((1, 1, num_filters)) for i in range(len(filter_sizes))]
+    W1 = np.random.randn(hidden_units, num_filters * len(filter_sizes)) * np.sqrt(2.0 / num_filters * len(filter_sizes))
     b1 = np.zeros((hidden_units, 1))
     W2 = np.random.randn(1, hidden_units) * np.sqrt(1.0 / hidden_units)
     b2 = np.zeros((1, 1))
@@ -180,43 +174,36 @@ def cnn(X_train, y_train, vocab_size, embedding_size, num_filters, filter_sizes,
     for epoch in range(num_epochs):
         mini_batches = random_split_batch(X_train, y_train, mini_batch_size)
 
-        params = [E] + F + [b, W1, b1, W2, b2]
+        params = [E] + F + b + [W1, b1, W2, b2]
         v_grads = [0] * len(params)
         s_grads = [0] * len(params)
         epoch_cost = 0
         for mini_batch in mini_batches:
-            start_iteration = time.time()
+            # start_iteration = time.time()
+            # print("iteration = " + str(iteration) + " of " + str(len(mini_batches)))
             iteration += 1
 
             X, y = mini_batch
             batch_size = X.shape[1]
 
-            start = time.time()
+            # start = time.time()
             A0, conv_cache = conv_forward_prop(X, E, F, b)
-            print("conv_forward time = " + str(time.time() - start))
+            # print("conv_forward time = " + str(time.time() - start))
             A1, regular_cache1 = regular_forward_prop(A0, W1, b1, relu)
             A2, regular_cache2 = regular_forward_prop(A1, W2, b2, sigmoid)
 
             cost = np.sum((-y * np.log(A2) - (1 - y) * np.log(1 - A2)), axis=1) / batch_size
             epoch_cost += cost
+            print("iteration = " + str(iteration) + " cost = " + str(cost))
 
             dA2 = -y / A2 + (1 - y) / (1 - A2)
             dA1, dW2, db2 = regular_backward_prop(dA2, regular_cache2, sigmoid_backward)
             dA0, dW1, db1 = regular_backward_prop(dA1, regular_cache1, relu_backward)
-            start = time.time()
+            # start = time.time()
             dE, dF, db = conv_backward_prop(dA0, conv_cache)
-            print("conv_backward time = " + str(time.time() - start))
+            # print("conv_backward time = " + str(time.time() - start))
 
-            grads = [dE] + dF + [db, dW1, db1, dW2, db2]
-
-            # for i in range(len(v_grads)):
-            #     print(i)
-            #     print("v_grads type = " + type(v_grads[i]).__name__)
-            #     print("grads type = " + type(grads[i]).__name__)
-            #     # print("v_grads.shape = " + str(v_grads[i].shape))
-            #     # print("grads.shape = " + str(grads[i].shape))
-            #     tmp = v_grads[i] * beta1 + grads[i] * (1 - beta1)
-            #     print(tmp)
+            grads = [dE] + dF + db + [dW1, db1, dW2, db2]
 
             v_grads = [v * beta1 + g * (1 - beta1) for v, g in zip(v_grads, grads)]
             s_grads = [s * beta2 + g * g * (1 - beta2) for s, g in zip(s_grads, grads)]
@@ -225,7 +212,7 @@ def cnn(X_train, y_train, vocab_size, embedding_size, num_filters, filter_sizes,
             s_grads_corrected = [s / (1 - np.power(beta2, iteration)) for s in s_grads]
 
             params = [p - alpha * v / (np.sqrt(s) + epsilon) for p, v, s in zip(params, v_grads_corrected, s_grads_corrected)]
-            print("iteration time = " + str(time.time() - start_iteration))
+            # print("iteration time = " + str(time.time() - start_iteration))
 
         epoch_cost /= len(mini_batches)
         if print_cost: #and epoch % 100 == 0:

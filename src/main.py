@@ -5,16 +5,6 @@ import random
 import cnn
 
 
-batch_size, seq_len, embed_size = 3, 4, 2
-num_filters, filter_size = 5, 3
-XE = np.arange(batch_size * seq_len * embed_size).reshape((batch_size * seq_len, embed_size))
-FC = np.arange(num_filters * filter_size * embed_size).reshape((num_filters * filter_size, embed_size))
-
-
-
-exit(0)
-
-
 x_text, y = load_data_and_labels("../data/rt-polaritydata/rt-polarity.pos", "../data/rt-polaritydata/rt-polarity.neg")
 y = np.dot(y, [[0], [1]])
 
@@ -45,7 +35,7 @@ filter_sizes = [3, 4, 5]
 hidden_units = 20
 num_epochs = 100
 mini_batch_size = 64
-alpha = 0.1
+alpha = 0.01
 beta1 = 0.9
 beta2 = 0.999
 epsilon = 1e-8
