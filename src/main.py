@@ -41,6 +41,7 @@ alpha = 0.01
 beta1 = 0.9
 beta2 = 0.999
 epsilon = 1e-8
+keep_probs = [1.0, 0.5]
 
 # vocab_size = len(vocab_processor.vocabulary_)
 # embedding_size = 2
@@ -61,7 +62,7 @@ epsilon = 1e-8
 
 print("vocab_size = " + str(vocab_size))
 
-params = cnn.cnn(x_train, y_train, vocab_size, embedding_size, num_filters, filter_sizes, hidden_units, num_epochs, mini_batch_size, alpha, beta1, beta2, epsilon)
+params = cnn.cnn(x_train, y_train, x_dev, y_dev, vocab_size, embedding_size, num_filters, filter_sizes, hidden_units, num_epochs, mini_batch_size, alpha, beta1, beta2, epsilon, keep_probs)
 
 exit(0)
 

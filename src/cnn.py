@@ -18,7 +18,7 @@ def sigmoid(a):
 # E = vocab_size x embed_size
 # F = list of filters of size filter_size x embed_size x num_filters
 # B = list of filter biases of size 1 x 1 x num_filters
-def conv_forward_prop(X, E, F, B):
+def conv_forward_prop(X, E, F, B, keep_prob):
     seq_len, batch_size = X.shape
 
     X = X.T  # batch_size x seq_len
@@ -54,19 +54,25 @@ def conv_forward_prop(X, E, F, B):
         XE_cols += [XE_col]
         Ws += [W]
 
-    a = np.concatenate(features, axis=1).T
+    A = np.concatenate(features, axis=1).T
+    D = np.random.rand(A.shape[0], A.shape[1]) < keep_prob
+    A *= D
+    A /= keep_prob
 
-    cache = features, M_idxs, iss, jss, CAs, XE_cols, Ws, XE, X, E, F
-    return a, cache
+    cache = features, M_idxs, iss, jss, CAs, XE_cols, Ws, XE, X, E, F, D, keep_prob
+    return A, cache
 
 
 # dA = total_filters x batch_size
 def conv_backward_prop(dA, cache):
 
-    dA = dA.T  # batch_size x total_filters
-    features, M_idxs, iss, jss, CAs, XE_cols, Ws, XE, X, E, F = cache
+    features, M_idxs, iss, jss, CAs, XE_cols, Ws, XE, X, E, F, D, keep_prob = cache
     batch_size, seq_len = X.shape
     vocab_size, embed_size = E.shape
+
+    dA /= keep_prob
+    dA *= D
+    dA = dA.T  # batch_size x total_filters
 
     dFeatures = np.split(dA, np.cumsum([f.shape[1] for f in features][:-1]), axis=1)
 
@@ -107,11 +113,14 @@ def conv_backward_prop(dA, cache):
 # X = prev_layer_size x batch_size
 # W = curr_layer_size x prev_layer_size
 # b = prev_layer_size x 1
-def regular_forward_prop(X, W, b, activation):
+def regular_forward_prop(X, W, b, activation, keep_prob):
     Z = np.dot(W, X) + b
     A = activation(Z)
+    D = np.random.rand(A.shape[0], A.shape[1]) < keep_prob
+    A *= D
+    A /= keep_prob
 
-    cache = X, W, A
+    cache = X, W, A, D, keep_prob
     return A, cache
 
 
@@ -125,9 +134,11 @@ def sigmoid_backward(dA, A):
 
 # dA = next_layer_size x batch_size
 def regular_backward_prop(dA, cache, activation_backward):
-    X, W, A = cache
+    X, W, A, D, keep_prob = cache
     batch_size = X.shape[1]
 
+    dA /= keep_prob
+    dA *= D
     dZ = activation_backward(dA, A)
     db = np.sum(dZ, axis=1, keepdims=True) / batch_size
     dW = np.dot(dZ, X.T) / batch_size
@@ -156,14 +167,14 @@ def random_split_batch(X_train, y_train, mini_batch_size):
     return mini_batches
 
 
-def J(X, y, params):
+def J(X, y, params, keep_probs):
     E, F, b, W1, b1, W2, b2 = params
 
     batch_size = X.shape[1]
 
-    A0, conv_cache = conv_forward_prop(X, E, F, b)
-    A1, regular_cache1 = regular_forward_prop(A0, W1, b1, relu)
-    A2, regular_cache2 = regular_forward_prop(A1, W2, b2, sigmoid)
+    A0, conv_cache = conv_forward_prop(X, E, F, b, keep_probs[0])
+    A1, regular_cache1 = regular_forward_prop(A0, W1, b1, relu, keep_probs[1])
+    A2, regular_cache2 = regular_forward_prop(A1, W2, b2, sigmoid, 1.0)
 
     cost = np.sum((-y * np.log(A2) - (1 - y) * np.log(1 - A2)), axis=1) / batch_size
 
@@ -230,9 +241,13 @@ def gradient_checking(params, grads, X, y, total_filters):
 
     return
 
+def calc_accuracy(A, Y):
+    predictions = A > 0.5
+    return 1.0 * np.sum(Y * predictions + (1 - Y) * (1 - predictions)) / Y.size
+
 # X_train = seq_len x batch_size
 # y_train = 1 x batch_size
-def cnn(X_train, y_train, vocab_size, embedding_size, num_filters, filter_sizes, hidden_units, num_epochs, mini_batch_size, alpha, beta1, beta2, epsilon, print_cost=True, plot_cost=True):
+def cnn(X_train, y_train, X_dev, y_dev, vocab_size, embedding_size, num_filters, filter_sizes, hidden_units, num_epochs, mini_batch_size, alpha, beta1, beta2, epsilon, keep_probs, print_cost=True, plot_cost=True):
 
     np.random.seed(7)
     random.seed(7)
@@ -265,17 +280,24 @@ def cnn(X_train, y_train, vocab_size, embedding_size, num_filters, filter_sizes,
         mini_batches = random_split_batch(X_train, y_train, mini_batch_size)
 
         epoch_cost = 0
+        epoch_accuracy = 0
         for mini_batch in mini_batches:
             iteration += 1
+
+            # if iteration % 5 == 0:
+            #     break
 
             X, y = mini_batch
             (E, F, b, W1, b1, W2, b2) = params2tuple(params, total_filters)
 
-            cost, A2, caches = J(X, y, (E, F, b, W1, b1, W2, b2))
+            cost, A2, caches = J(X, y, (E, F, b, W1, b1, W2, b2), keep_probs)
             conv_cache, regular_cache1, regular_cache2 = caches
 
+            train_accuracy = calc_accuracy(A2, y)
+            print("iteration = " + str(iteration) + " cost = " + str(cost) + " train acc = " + str(train_accuracy))
+
             epoch_cost += cost
-            print("iteration = " + str(iteration) + " cost = " + str(cost))
+            epoch_accuracy += train_accuracy
 
             dA2 = -y / A2 + (1 - y) / (1 - A2)
             dA1, dW2, db2 = regular_backward_prop(dA2, regular_cache2, sigmoid_backward)
@@ -295,10 +317,18 @@ def cnn(X_train, y_train, vocab_size, embedding_size, num_filters, filter_sizes,
             params = [p - alpha * v / (np.sqrt(s) + epsilon) for p, v, s in zip(params, v_grads_corrected, s_grads_corrected)]
 
         epoch_cost /= len(mini_batches)
+        epoch_accuracy /= len(mini_batches)
+
         if print_cost: #and epoch % 100 == 0:
             print ("Cost after epoch %i: %f" % (epoch, epoch_cost))
         if print_cost: #and epoch % 5 == 0:
             costs.append(epoch_cost)
+
+        cost_dev, A2_dev, _ = J(X_dev, y_dev, params2tuple(params, total_filters), [1.0, 1.0])
+        dev_accuracy = calc_accuracy(A2_dev, y_dev)
+
+        print("train epoch accuracy = " + str(epoch_accuracy))
+        print("dev accuracy = " + str(dev_accuracy))
 
     if plot_cost:
         plt.plot(np.squeeze(costs))
