@@ -2,6 +2,9 @@ import numpy as np
 import random
 import matplotlib.pyplot as plt
 import time
+import cPickle as pickle
+import os
+import math
 
 
 def relu(a):
@@ -185,7 +188,6 @@ def J(X, y, params, keep_probs):
 def roll(params):
     rolled = np.array([])
     for param in params:
-        # print(str(param.shape) + "    " + str(param.size))
         rolled = np.append(rolled, param.reshape(-1))
 
     return rolled
@@ -204,7 +206,6 @@ def params2tuple(params, total_filters):
 
 
 def unroll(rolled, params, total_filters):
-
     unrolled = [None] * len(params)
     start = 0
     for i in range(len(params)):
@@ -213,44 +214,36 @@ def unroll(rolled, params, total_filters):
 
     return params2tuple(unrolled, total_filters)
 
+
 def gradient_checking(params, grads, X, y, total_filters):
     r_params = roll(params)
     r_params = r_params.astype(np.float128)
-    # print(r_params)
+
     J_plus, J_minus = np.zeros((len(r_params))), np.zeros((len(r_params)))
     print("len of r_params = " + str(len(r_params)))
     for i in range(len(r_params)):
         original = r_params[i]
         r_params[i] = original + 1e-5
-        J_plus[i], _, _ = J(X, y, unroll(r_params, params, total_filters))
+        J_plus[i], _, _ = J(X, y, unroll(r_params, params, total_filters), [1.0, 1.0])
         r_params[i] = original - 1e-5
-        J_minus[i], _, _ = J(X, y, unroll(r_params, params, total_filters))
+        J_minus[i], _, _ = J(X, y, unroll(r_params, params, total_filters), [1.0, 1.0])
         r_params[i] = original
 
     d_theta = roll(grads)
     d_theta_approx = (J_plus - J_minus) / 2 / 1e-5
 
-    # print(d_theta)
-    # print(d_theta_approx)
-    diff = (np.abs(d_theta - d_theta_approx))  # / (np.abs(d_theta) + np.abs(d_theta_approx))
-    # print("diff = "); print(diff)
-
-    # print(d_theta - d_theta_approx)
     error = np.linalg.norm(d_theta - d_theta_approx) / (np.linalg.norm(d_theta) + np.linalg.norm(d_theta_approx))
     print("error = " + str(error))
 
     return
 
+
 def calc_accuracy(A, Y):
     predictions = A > 0.5
     return 1.0 * np.sum(Y * predictions + (1 - Y) * (1 - predictions)) / Y.size
 
-# X_train = seq_len x batch_size
-# y_train = 1 x batch_size
-def cnn(X_train, y_train, X_dev, y_dev, vocab_size, embedding_size, num_filters, filter_sizes, hidden_units, num_epochs, mini_batch_size, alpha, beta1, beta2, epsilon, keep_probs, print_cost=True, plot_cost=True):
 
-    np.random.seed(7)
-    random.seed(7)
+def random_initialization(vocab_size, embedding_size, num_filters, filter_sizes, hidden_units):
     total_filters = len(filter_sizes)
 
     E = np.random.rand(vocab_size, embedding_size) * 2 - 1
@@ -261,22 +254,40 @@ def cnn(X_train, y_train, X_dev, y_dev, vocab_size, embedding_size, num_filters,
     W2 = np.random.randn(1, hidden_units) * np.sqrt(1.0 / hidden_units)
     b2 = np.zeros((1, 1))
 
-    # gradient checking initialization
-    # E = np.random.rand(vocab_size, embedding_size) * 2 - 1
-    # F = [np.random.randn(filter_size, embedding_size, num_filters) * np.sqrt(6.0 / filter_size / embedding_size) for filter_size in filter_sizes]
-    # b = [np.random.rand(1, 1, num_filters) for i in range(total_filters)]
-    # W1 = np.random.randn(hidden_units, num_filters * total_filters) * np.sqrt(2.0 / num_filters * total_filters)
-    # b1 = np.random.rand(hidden_units, 1)
-    # W2 = np.random.randn(1, hidden_units) * np.sqrt(1.0 / hidden_units)
-    # b2 = np.random.rand(1, 1)
+    return [E] + F + b + [W1, b1, W2, b2]
 
-    params = [E] + F + b + [W1, b1, W2, b2]
-    v_grads = [0] * len(params)
-    s_grads = [0] * len(params)
 
-    iteration = 0
-    costs = []
-    for epoch in range(num_epochs):
+# X_train = seq_len x batch_size
+# y_train = 1 x batch_size
+def cnn(X_train, y_train, X_dev, y_dev, load_params_file, dump_dir, vocab_size, embedding_size,
+        num_filters, filter_sizes, hidden_units, num_epochs, mini_batch_size, alpha, beta1, beta2,
+        epsilon, keep_probs, plot_cost=True):
+
+    np.random.seed(7)
+    random.seed(7)
+    total_filters = len(filter_sizes)
+
+    if load_params_file is None:
+        params = random_initialization(vocab_size, embedding_size, num_filters, filter_sizes, hidden_units)
+        v_grads = [0] * len(params)
+        s_grads = [0] * len(params)
+        iteration = 0
+        start_epoch = 0
+        costs = []
+    else:
+        params, v_grads, s_grads, costs, iteration, start_epoch = pickle.load(open(load_params_file, "rb"))
+
+    hyperparams = {
+        "load_params_file": load_params_file, "dump_dir": dump_dir, "vocab_size": vocab_size,
+        "embedding_size": embedding_size, "num_filters": num_filters, "filter_sizes": filter_sizes,
+        "hidden_units": hidden_units, "num_epochs": num_epochs, "mini_batch_size": mini_batch_size,
+        "alpha": alpha, "beta1": beta1, "beta2": beta2, "epsilon": epsilon, "keep_probs": keep_probs,
+        "plot_cost": plot_cost, "iteration": iteration, "start_epoch": start_epoch
+    }
+    pickle.dump(hyperparams, open(os.path.join(dump_dir, "hyperparams.txt"), "wb"))
+
+    print("iteration = %s start_epoch = %s" % (iteration, start_epoch))
+    for epoch in range(start_epoch, num_epochs):
         mini_batches = random_split_batch(X_train, y_train, mini_batch_size)
 
         epoch_cost = 0
@@ -288,13 +299,17 @@ def cnn(X_train, y_train, X_dev, y_dev, vocab_size, embedding_size, num_filters,
             #     break
 
             X, y = mini_batch
-            (E, F, b, W1, b1, W2, b2) = params2tuple(params, total_filters)
 
-            cost, A2, caches = J(X, y, (E, F, b, W1, b1, W2, b2), keep_probs)
+            cost, A2, caches = J(X, y, params2tuple(params, total_filters), keep_probs)
             conv_cache, regular_cache1, regular_cache2 = caches
 
             train_accuracy = calc_accuracy(A2, y)
-            print("iteration = " + str(iteration) + " cost = " + str(cost) + " train acc = " + str(train_accuracy))
+            logging_data = "iteration = %s cost = %s train_accuracy = %s" % (iteration, cost, train_accuracy)
+            print(logging_data)
+            pickle.dump(logging_data, open(os.path.join(dump_dir, "log.txt"), "ab"))
+
+            if math.isnan(cost):
+                return
 
             epoch_cost += cost
             epoch_accuracy += train_accuracy
@@ -319,14 +334,20 @@ def cnn(X_train, y_train, X_dev, y_dev, vocab_size, embedding_size, num_filters,
         epoch_cost /= len(mini_batches)
         epoch_accuracy /= len(mini_batches)
 
-        if print_cost: #and epoch % 100 == 0:
-            print ("Cost after epoch %i: %f" % (epoch, epoch_cost))
-        if print_cost: #and epoch % 5 == 0:
-            costs.append(epoch_cost)
+        costs.append(epoch_cost)
 
         cost_dev, A2_dev, _ = J(X_dev, y_dev, params2tuple(params, total_filters), [1.0, 1.0])
         dev_accuracy = calc_accuracy(A2_dev, y_dev)
 
+        logging_data = "epoch = %s epoch_cost = %f alpha = %f epoch_accuracy = %f dev_accuracy = %f" % \
+                       (epoch, epoch_cost, alpha, epoch_accuracy, dev_accuracy)
+        pickle.dump(logging_data, open(os.path.join(dump_dir, "log.txt"), "ab"))
+
+        training_data = [params, v_grads, s_grads, costs, iteration, epoch+1]
+        pickle.dump(training_data, open(os.path.join(dump_dir, "training_" + str(epoch) + ".txt"), "wb"))
+
+        print("cost after epoch %i: %f" % (epoch, epoch_cost))
+        print("alpha = " + str(alpha))
         print("train epoch accuracy = " + str(epoch_accuracy))
         print("dev accuracy = " + str(dev_accuracy))
 
