@@ -179,6 +179,18 @@ def J(X, y, params, keep_probs):
     A1, regular_cache1 = regular_forward_prop(A0, W1, b1, relu, keep_probs[1])
     A2, regular_cache2 = regular_forward_prop(A1, W2, b2, sigmoid, 1.0)
 
+    # print("a0 mean = " + str(np.mean(A0)))
+    # print("a0 var = " + str(np.var(A0)))
+    # print("a0 n var = " + str(1.0 / np.var(A0)))
+    # print("a0 max = " + str(np.max(A0)))
+    # print("a0 min = " + str(np.min(A0)))
+    #
+    # print("a1 mean = " + str(np.mean(A1)))
+    # print("a1 var = " + str(np.var(A1)))
+    # print("a1 n var = " + str(1.0 / np.var(A1)))
+    # print("a1 max = " + str(np.max(A1)))
+    # print("a1 min = " + str(np.min(A1)))
+
     cost = np.sum((-y * np.log(A2) - (1 - y) * np.log(1 - A2)), axis=1) / batch_size
 
     caches = conv_cache, regular_cache1, regular_cache2
@@ -249,7 +261,7 @@ def random_initialization(vocab_size, embedding_size, num_filters, filter_sizes,
     E = np.random.rand(vocab_size, embedding_size) * 2 - 1
     F = [np.random.randn(filter_size, embedding_size, num_filters) * np.sqrt(6.0 / filter_size / embedding_size) for filter_size in filter_sizes]
     b = [np.zeros((1, 1, num_filters)) for i in range(total_filters)]
-    W1 = np.random.randn(hidden_units, num_filters * total_filters) * np.sqrt(2.0 / num_filters * total_filters)
+    W1 = np.random.randn(hidden_units, num_filters * total_filters) * np.sqrt(2.0 / num_filters / total_filters)
     b1 = np.zeros((hidden_units, 1))
     W2 = np.random.randn(1, hidden_units) * np.sqrt(1.0 / hidden_units)
     b2 = np.zeros((1, 1))
@@ -295,8 +307,10 @@ def cnn(X_train, y_train, X_dev, y_dev, load_params_file, dump_dir, vocab_size, 
         for mini_batch in mini_batches:
             iteration += 1
 
-            # if iteration % 5 == 0:
-            #     break
+            # print("mean = " + str([np.mean(x) for x in params]))
+            # print("var = " + str([np.var(x) for x in params]))
+            # print("max = " + str([np.max(x) for x in params]))
+            # print("min = " + str([np.min(x) for x in params]))
 
             X, y = mini_batch
 
@@ -321,7 +335,10 @@ def cnn(X_train, y_train, X_dev, y_dev, load_params_file, dump_dir, vocab_size, 
 
             grads = [dE] + dF + db + [dW1, db1, dW2, db2]
 
-            # gradient_checking(params, grads, X, y, total_filters)
+            # print("mean g = " + str([np.mean(x) for x in grads]))
+            # print("var g = " + str([np.var(x) for x in grads]))
+            # print("max g = " + str([np.max(x) for x in grads]))
+            # print("min g = " + str([np.min(x) for x in grads]))
 
             v_grads = [v * beta1 + g * (1 - beta1) for v, g in zip(v_grads, grads)]
             s_grads = [s * beta2 + g * g * (1 - beta2) for s, g in zip(s_grads, grads)]

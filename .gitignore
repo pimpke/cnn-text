@@ -1,4 +1,5 @@
 .idea/
 data/
+runs/
 *.tar.gz
 *.pyc
